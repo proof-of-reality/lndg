@@ -13,6 +13,7 @@
       <th onclick="sortTable(3, 'String', 'peersTable')">Inbound</th>
       <th onclick="sortTable(4, 'int', 'peersTable')">Sats Sent</th>
       <th onclick="sortTable(5, 'int', 'peersTable')">Sats Received</th>
+      <th>Latency</th>
     </tr>
     {% for peer in peers %}
     <tr>
@@ -22,6 +23,7 @@
       <td>{{ peer.inbound }}</td>
       <td>{{ peer.sat_sent|intcomma }}</td>
       <td>{{ peer.sat_recv|intcomma }}</td>
+      <td>{{peer.latency}}</td>
     </tr>
     {% endfor %}
   </table>
