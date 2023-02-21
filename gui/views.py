@@ -22,6 +22,7 @@ from lndg import settings
 from os import path
 from pandas import DataFrame, merge
 from requests import get
+from tcp_latency import measure_latency
 
 def graph_links():
     if LocalSettings.objects.filter(key='GUI-GraphLinks').exists():

@@ -7,3 +7,4 @@ pytz
 pandas
 requests
 asyncio
+tcp-latency
