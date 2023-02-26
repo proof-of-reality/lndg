@@ -22,7 +22,7 @@ from lndg import settings
 from os import path
 from pandas import DataFrame, merge
 from requests import get
-from tcp_latency import measure_latency
+from timeit import default_timer as timer
 
 def graph_links():
     if LocalSettings.objects.filter(key='GUI-GraphLinks').exists():
@@ -604,24 +604,29 @@ def routes(request):
     else:
         return redirect('home')
 
+@api_view(['GET'])
+def latency(http_request):
+    addr = http_request.GET.get('addr')
+    start = 0.0
+    try:
+        stub = lnrpc.LightningStub(lnd_connect())
+        pk, _, host = addr.partition('@')
+        # TODO: implement PING request when available from lnd grpc
+        req = ln.NodeInfoRequest(pub_key=pk, include_channels=False)
+        start = timer()
+        _ = stub.GetNodeInfo(req)
+        end = timer()
+        elapsed_time = int((end - start) * 1000)
+        return Response({'message': 'success', 'data': str(elapsed_time) + ' ms'})
+    except Exception as e:
+        print(str(e))
+        return Response({'message': 'error', 'data': ''})
+
+
 @is_login_required(login_required(login_url='/lndg-admin/login/?next=/'), settings.LOGIN_REQUIRED)
 def peers(request):
     if request.method == 'GET':
-        peers_db = Peers.objects.filter(connected=True)
-        peers = []
-        for db_peer in peers_db:
-            addr = db_peer.address.split(':')
-            latency = 0
-            try:
-                measurements = measure_latency(host=addr[0], port=int(addr[1]), timeout=1)
-                latency = measurements[0] if len(measurements) == 1 else 0
-            except Exception as e:
-                print(str(e))
-                messages.error(request, str(e))
-
-            peer = {'address': db_peer.address, 'pubkey': db_peer.pubkey, 'alias': db_peer.alias, 'connected': db_peer.connected, 'inbound': db_peer.inbound, 'last_reconnected': db_peer.last_reconnected, 'latency': "%.2f ms" % round(latency, 2) if latency > 1 else "---"}
-            peers.append(peer)
-
+        peers = Peers.objects.filter(connected=True)
         context = {
             'peers': peers,
             'num_peers': len(peers),

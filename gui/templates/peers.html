@@ -3,7 +3,19 @@
 {% block content %}
 {% load humanize %}
 {% if peers %}
-<div class="w3-container w3-padding-small">
+<script>
+
+  const apiCaller = new ApiCaller('/api/latency?addr=', 5000)
+  document.addEventListener("visibilitychange", async () => {
+    if(!document.hidden){
+      apiCaller.resume()
+    }else{
+      apiCaller.stop()
+    }
+  });
+  apiCaller.callWithParamsFrom('td[name="latency"]', 'data-addr')
+</script>
+<div class="w3-container w3-padding-small" >
   <h2>Peers List ({{ num_peers }})</h2>
   <table id="peersTable" class="w3-table-all w3-centered w3-hoverable">
     <tr>
@@ -23,13 +35,12 @@
       <td>{{ peer.inbound }}</td>
       <td>{{ peer.sat_sent|intcomma }}</td>
       <td>{{ peer.sat_recv|intcomma }}</td>
-      <td>{{peer.latency}}</td>
+      <td name="latency" data-addr="{{peer.pubkey}}@{{peer.address}}"><div class="loader"></div></td>
     </tr>
     {% endfor %}
   </table>
 </div>
-{% endif %}
-{% if not peers %}
+{% else %}
 <div class="w3-container w3-padding-small">
   <center><h1>No connected peers found!</h1></center>
 </div>
