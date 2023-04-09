@@ -13,9 +13,10 @@ from pandas import DataFrame
 from requests import get
 environ['DJANGO_SETTINGS_MODULE'] = 'lndg.settings'
 django.setup()
-from gui.models import Payments, PaymentHops, Invoices, Forwards, Channels, Peers, Onchain, Closures, Resolutions, PendingHTLCs, LocalSettings, FailedHTLCs, Autofees, PendingChannels, HistFailedHTLC, PeerEvents
+from gui.models import Balance, Payments, PaymentHops, Invoices, Forwards, Channels, Peers, Onchain, Closures, Resolutions, PendingHTLCs, LocalSettings, FailedHTLCs, Autofees, PendingChannels, HistFailedHTLC, PeerEvents
 
 def update_payments(stub):
+    new_payments = []
     self_pubkey = stub.GetInfo(ln.GetInfoRequest()).identity_pubkey
     inflight_payments = Payments.objects.filter(status=1).order_by('index')
     for payment in inflight_payments:
@@ -37,6 +38,8 @@ def update_payments(stub):
             #Error inserting, try to update instead
             print(f"{datetime.now().strftime('%c')} : Error processing {new_payment=} : {str(e)=}")
         update_payment(stub, payment, self_pubkey)
+        new_payments.append(new_payment)
+    return new_payments
 
 def update_payment(stub, payment, self_pubkey):
     db_payment = Payments.objects.filter(payment_hash=payment.payment_hash)[0]
@@ -88,6 +91,7 @@ def update_payment(stub, payment, self_pubkey):
     db_payment.save()
 
 def update_invoices(stub):
+    new_invoices = []
     open_invoices = Invoices.objects.filter(state=0).order_by('index')
     for open_invoice in open_invoices:
         #print(f"{datetime.now().strftime('%c')} : Processing open invoice {open_invoice.index=} {open_invoice.state=} {open_invoice.r_hash=}")
@@ -103,6 +107,8 @@ def update_invoices(stub):
         db_invoice = Invoices(creation_date=datetime.fromtimestamp(invoice.creation_date), r_hash=invoice.r_hash.hex(), value=round(invoice.value_msat/1000, 3), amt_paid=invoice.amt_paid_sat, state=invoice.state, index=invoice.add_index)
         db_invoice.save()
         update_invoice(stub, invoice, db_invoice)
+        new_invoices.append(db_invoice)
+    return new_invoices
 
 def update_invoice(stub, invoice, db_invoice):
     if invoice.state == 1:
@@ -151,12 +157,16 @@ def update_invoice(stub, invoice, db_invoice):
 def update_forwards(stub):
     records = Forwards.objects.count()
     forwards = stub.ForwardingHistory(ln.ForwardingHistoryRequest(start_time=1420070400, index_offset=records, num_max_events=100)).forwarding_events
+    new_forwards = []
     for forward in forwards:
         incoming_peer_alias = Channels.objects.filter(chan_id=forward.chan_id_in)[0].alias if Channels.objects.filter(chan_id=forward.chan_id_in).exists() else None
         incoming_peer_alias = Channels.objects.filter(chan_id=forward.chan_id_in)[0].remote_pubkey[:12] if incoming_peer_alias == '' else incoming_peer_alias
         outgoing_peer_alias = Channels.objects.filter(chan_id=forward.chan_id_out)[0].alias if Channels.objects.filter(chan_id=forward.chan_id_out).exists() else None
         outgoing_peer_alias = Channels.objects.filter(chan_id=forward.chan_id_out)[0].remote_pubkey[:12] if outgoing_peer_alias == '' else outgoing_peer_alias
-        Forwards(forward_date=datetime.fromtimestamp(forward.timestamp), chan_id_in=forward.chan_id_in, chan_id_out=forward.chan_id_out, chan_in_alias=incoming_peer_alias, chan_out_alias=outgoing_peer_alias, amt_in_msat=forward.amt_in_msat, amt_out_msat=forward.amt_out_msat, fee=round(forward.fee_msat/1000, 3)).save()
+        fw = Forwards(forward_date=datetime.fromtimestamp(forward.timestamp), chan_id_in=forward.chan_id_in, chan_id_out=forward.chan_id_out, chan_in_alias=incoming_peer_alias, chan_out_alias=outgoing_peer_alias, amt_in_msat=forward.amt_in_msat, amt_out_msat=forward.amt_out_msat, fee=round(forward.fee_msat/1000, 3))
+        fw.save()
+        new_forwards.append(fw)
+    return new_forwards
 
 def update_channels(stub):
     counter = 0
@@ -385,8 +395,12 @@ def update_onchain(stub):
     Onchain.objects.filter(block_height=0).delete()
     last_block = 0 if Onchain.objects.aggregate(Max('block_height'))['block_height__max'] == None else Onchain.objects.aggregate(Max('block_height'))['block_height__max'] + 1
     onchain_txs = stub.GetTransactions(ln.GetTransactionsRequest(start_height=last_block)).transactions
+    new_txs = []
     for tx in onchain_txs:
-        Onchain(tx_hash=tx.tx_hash, time_stamp=datetime.fromtimestamp(tx.time_stamp), amount=tx.amount, fee=tx.total_fees, block_hash=tx.block_hash, block_height=tx.block_height, label=tx.label[:100]).save()
+        tx = Onchain(tx_hash=tx.tx_hash, time_stamp=datetime.fromtimestamp(tx.time_stamp), amount=tx.amount, fee=tx.total_fees, block_hash=tx.block_hash, block_height=tx.block_height, label=tx.label[:100])
+        tx.save()
+        new_txs.append(tx)
+    return new_txs
 
 def network_links():
     if LocalSettings.objects.filter(key='GUI-NetLinks').exists():
@@ -408,6 +422,7 @@ def get_tx_fees(txid):
 
 def update_closures(stub):
     closures = stub.ClosedChannels(ln.ClosedChannelsRequest()).channels
+    new_closures = []
     if len(closures) > Closures.objects.all().count():
         counter = 0
         skip = Closures.objects.all().count()
@@ -433,6 +448,8 @@ def update_closures(stub):
                         Resolutions(chan_id=closure.chan_id, resolution_type=resolution.resolution_type, outcome=resolution.outcome, outpoint_tx=resolution.outpoint.txid_str, outpoint_index=resolution.outpoint.output_index, amount_sat=resolution.amount_sat, sweep_txid=resolution.sweep_txid).save()
                 db_closure.closing_costs = closing_costs
                 db_closure.save()
+                new_closures.append(db_closure)
+    return new_closures
 
 def reconnect_peers(stub):
     inactive_peers = Channels.objects.filter(is_open=True, is_active=False, private=False).values_list('remote_pubkey', flat=True).distinct()
@@ -649,6 +666,12 @@ def agg_failed_htlcs():
     agg_htlcs(FailedHTLCs.objects.filter(timestamp__lte=time_filter, failure_detail=99)[:100], 'downstream')
     agg_htlcs(FailedHTLCs.objects.filter(timestamp__lte=time_filter).exclude(failure_detail__in=[6, 99])[:100], 'other')
 
+def update_balance(payments, forwards, invoices, onchain, closures):
+    current_balance = Balance.objects.last()
+    if current_balance.timestamp < datetime.now() - timedelta(hours=1):
+        return
+
+    
 
 def main():
     try:
@@ -656,15 +679,16 @@ def main():
         #Update data
         update_peers(stub)
         update_channels(stub)
-        update_invoices(stub)
-        update_payments(stub)
-        update_forwards(stub)
-        update_onchain(stub)
-        update_closures(stub)
+        invoices = update_invoices(stub)
+        payments = update_payments(stub)
+        forwards = update_forwards(stub)
+        txs = update_onchain(stub)
+        closures = update_closures(stub)
         reconnect_peers(stub)
         clean_payments(stub)
         auto_fees(stub)
         agg_failed_htlcs()
+        update_balance(payments, forwards, invoices, txs, closures)
     except Exception as e:
         print(f"{datetime.now().strftime('%c')} : Error processing background data: {str(e)}")
 if __name__ == '__main__':
